@@ -137,6 +137,40 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "all_reduce_splitter",
+    srcs = ["all_reduce_splitter.cc"],
+    hdrs = ["all_reduce_splitter.h"],
+    deps = [
+        ":computation_placer_hdr",
+        "//xla/hlo/ir:hlo",
+        ":hlo_pass",
+        ":shape_inference",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+xla_cc_test(
+    name = "all_reduce_splitter_test",
+    srcs = ["all_reduce_splitter_test.cc"],
+    deps = [
+        ":all_reduce_splitter",
+        ":hlo_matchers",
+        "//xla/hlo/ir:hlo",
+        "//xla:literal",
+        "//xla:literal_util",
+        "//xla:shape_util",
+        "//xla:types",
+        "//xla:xla_data_proto_cc",
+        "//xla/tests:hlo_test_base",
+        "//xla/tests:test_utils",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "@com_google_absl//absl/memory",
+    ],
+)
+
+cc_library(
     name = "all_reduce_key",
     srcs = ["all_reduce_key.cc"],
     hdrs = ["all_reduce_key.h"],

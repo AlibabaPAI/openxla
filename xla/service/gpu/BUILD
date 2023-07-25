@@ -3739,6 +3739,7 @@ cc_library(
         "//xla/service:dot_merger",
         "//xla/service:dump",
         "//xla/service:dynamic_dimension_simplifier",
+        "//xla/service:all_reduce_splitter",
         "//xla/service:dynamic_index_splitter",
         "//xla/service:dynamic_padder",
         "//xla/service:eigh_expander",

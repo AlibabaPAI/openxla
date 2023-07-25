@@ -1647,6 +1647,12 @@ void MakeDebugOptionsFlags(std::vector<tsl::Flag>* flag_list,
       "Threshold to rewrite matmul to cuBLAS or Triton "
       "(minumum combined number of elements of both matrices "
       "in non-batch dimensions to be considered for a rewrite)."));
+  flag_objects->push_back(tsl::Flag(
+      "xla_gpu_enable_all_reduce_splitter",
+      bool_setter_for(&DebugOptions::set_xla_gpu_enable_all_reduce_splitter),
+      debug_options->xla_gpu_enable_all_reduce_splitter(),
+      "Break down large allreduce operations into numerous smaller "
+      "ones to facilitate the overlap of computation and communication."));
 }  // NOLINT(readability/fn_size)
 
 // Allocates flag_values and flag_objects; this function must not be called more

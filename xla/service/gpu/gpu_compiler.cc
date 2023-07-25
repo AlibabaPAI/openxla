@@ -175,6 +175,7 @@ limitations under the License.
 #include "xla/service/gpu/topk_specializer.h"
 #include "xla/service/gpu/topk_splitter.h"
 #include "xla/service/gpu/tree_reduction_rewriter.h"
+#include "xla/service/all_reduce_splitter.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_computation_deduplicator.h"
 #include "xla/service/hlo_constant_folding.h"
@@ -1082,6 +1083,13 @@ absl::Status RunPostFusionPasses(
         add_custom_kernel_replacement_passes) {
   HloPassPipeline pipeline("post-fusion optimization");
   pipeline.AddPass<RenameFusions>();
+  if (hlo_module->config()
+          .debug_options()
+          .xla_gpu_enable_all_reduce_splitter()) {
+    pipeline.AddPass<AllReduceSplitter>(
+        /*combine_threshold_in_bytes=*/30 * 1024 * 1024,
+        /*combine_threshold_count=*/256);
+  }
   pipeline.AddPass<AllGatherCombiner>(
       hlo_module->config()
           .debug_options()

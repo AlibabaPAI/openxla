@@ -731,6 +731,10 @@ message DebugOptions {
 
   // Next id: 286
 
+  // Break down large allreduce operations into numerous smaller
+  // ones to facilitate the overlap of computation and communication.
+  bool xla_gpu_enable_all_reduce_splitter = 501;
+
   // Extra options to pass to the compilation backend (e.g. LLVM); specific
   // interpretation of these values is left to the backend.
   map<string, string> xla_backend_extra_options = 500;
