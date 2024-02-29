@@ -69,7 +69,7 @@ struct SpmdPartitionerOptions {
   // tensor. If it is set to false, the result tends to be more
   // memory-efficient, and the compiler can use the ScheduleAwareAllGatherCSE
   // pass to CSE some all-gathers which are relatively close to each other.
-  bool cache_all_gather = true;
+  bool cache_all_gather = false;
 
   // When making a compromise between windowed einsum speed and memory usage
   // prefer the former if true.

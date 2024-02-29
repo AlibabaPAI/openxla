@@ -219,6 +219,7 @@ limitations under the License.
 #include "xla/service/slow_operation_alarm.h"
 #include "xla/service/sort_simplifier.h"
 #include "xla/service/spmd/collective_permute_motion.h"
+#include "xla/service/spmd/schedule_aware_collective_ops_cse.h"
 #include "xla/service/spmd/stateful_rng_spmd_partitioner.h"
 #include "xla/service/stable_sort_expander.h"
 #include "xla/service/stochastic_convert_decomposer.h"
@@ -901,6 +902,8 @@ absl::Status RunCollectiveOptimizationPasses(
   const DebugOptions& debug_options = hlo_module->config().debug_options();
 
   HloPassPipeline collectives_pipeline("collective-optimizations");
+  collectives_pipeline.AddPass<ScheduleAwareCollectiveOpsCSE>(
+    /*distance_threshold*/40, /*for_replicas=*/false);
   collectives_pipeline.AddPass<AllReduceFolder>();
   collectives_pipeline.AddPass<ReduceScatterCreator>();
   collectives_pipeline.AddPass<AllGatherOptimizer>();

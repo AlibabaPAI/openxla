@@ -3802,6 +3802,7 @@ cc_library(
         "//xla/service:sub_byte_normalization",
         "//xla/service/llvm_ir:llvm_util",
         "//xla/service/spmd:collective_permute_motion",
+        "//xla/service/spmd:schedule_aware_collective_ops_cse",
         "//xla/service/spmd:stateful_rng_spmd_partitioner",
         "//xla/stream_executor:device_description_proto_cc",
         "//xla/stream_executor:device_description",
