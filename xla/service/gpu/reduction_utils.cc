@@ -105,7 +105,11 @@ int64_t ReductionDimensionRaceFreeBound(
     const ReductionDimensions& reduction_dimensions) {
   Vector3 reduction_tiling = GetReductionTiling(reduction_dimensions);
   if (reduction_dimensions.is_row_reduction) {
-    return MinThreadsXRowReduction(hlo_module_config) * reduction_tiling[2];
+    static std::optional<int64_t> cached_min_threads_num;
+    if (!cached_min_threads_num) {
+      cached_min_threads_num = MinThreadsXRowReduction(hlo_module_config);
+    }
+    return *cached_min_threads_num * reduction_tiling[2];
   }
   return WarpSize() * reduction_tiling[1];
 }
