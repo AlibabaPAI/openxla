@@ -268,9 +268,9 @@ limitations under the License.
 #include "xla/stream_executor/rocm/rocm_platform_id.h"
 #endif
 
-#ifdef PLATFORM_GOOGLE
+// #ifdef PLATFORM_GOOGLE
 #include "xla/hlo/experimental/auto_sharding/auto_sharding.h"
-#endif  // PLATFORM_GOOGLE
+// #endif  // PLATFORM_GOOGLE
 
 namespace xla {
 namespace gpu {
@@ -673,7 +673,7 @@ absl::Status RunSPMDPasses(
     spmd_pipeline.AddPass<HloConstantSplitter>();
     spmd_simplify.AddPass<HloDCE>();
 
-#ifdef PLATFORM_GOOGLE
+// #ifdef PLATFORM_GOOGLE
     if (auto_sharding) {
       AutoShardingOption option;
       option.enable = true;
@@ -700,7 +700,7 @@ absl::Status RunSPMDPasses(
               .xla_gpu_auto_spmd_partitioning_memory_budget_ratio();
       spmd_pipeline.AddPass<AutoSharding>(option);
     }
-#endif  // PLATFORM_GOOGLE
+// #endif  // PLATFORM_GOOGLE
 
     spmd_pipeline.AddPass<ShardingPropagation>(
         /*is_spmd=*/true, /*propagate_metadata=*/false,
