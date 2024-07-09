@@ -292,7 +292,7 @@ AutoShardingSolverResult CallORToolsSolver(
   CHECK(solver);
   solver->MutableObjective()->SetMinimization();
   std::string solver_parameter_str;
-#ifdef PLATFORM_GOOGLE
+// #ifdef PLATFORM_GOOGLE
   if (solver->ProblemType() ==
       operations_research::MPSolver::SAT_INTEGER_PROGRAMMING) {
     // Set random_seed, interleave_search and share_binary_clauses for
@@ -307,7 +307,7 @@ AutoShardingSolverResult CallORToolsSolver(
             : absl::StrCat("mip_max_bound:1e9,num_workers:", num_workers);
     solver->SetSolverSpecificParametersAsString(solver_parameter_str);
   }
-#endif
+// #endif
   // Create variables
   std::vector<std::vector<MPVariable*>> s(request.num_nodes());
   std::vector<std::vector<MPVariable*>> e(num_edges);
