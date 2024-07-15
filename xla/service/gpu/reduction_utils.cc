@@ -106,7 +106,7 @@ int64_t ReductionDimensionRaceFreeBound(
   Vector3 reduction_tiling = GetReductionTiling(reduction_dimensions);
   if (reduction_dimensions.is_row_reduction) {
     static std::optional<int64_t> cached_min_threads_num;
-    if (!cached_min_threads_num) {
+    if (!cached_min_threads_num.has_value()) {
       cached_min_threads_num = MinThreadsXRowReduction(hlo_module_config);
     }
     return *cached_min_threads_num * reduction_tiling[2];
