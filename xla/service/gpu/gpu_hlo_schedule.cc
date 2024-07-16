@@ -72,6 +72,9 @@ namespace gpu {
 
 namespace {
 
+constexpr char kPjrtAllocatorFraction[] =
+    "PJRT_ALLOCATOR_FRACTION";
+
 bool IsNopInstruction(const HloInstruction& hlo) {
   HloOpcode op = hlo.opcode();
   return op == HloOpcode::kGetTupleElement || op == HloOpcode::kBitcast ||
@@ -908,38 +911,18 @@ static int64_t GetSchedulerMemoryLimit(
   //
   // From that base value, subtract any input and output sizes (assuming they
   // are live throughout the execution) and then apply a slop factor.
+  char* env = std::getenv(kPjrtAllocatorFraction);
+  float PJRT_ALLOCATOR_FRACTION = 0.95;
+  if (env != nullptr) {
+    absl::SimpleAtof(env, &PJRT_ALLOCATOR_FRACTION);
+  }
+
   const int64_t base_limit =
       module->config().device_memory_size() != 0
           ? module->config().device_memory_size()
-          : gpu_device_info.device_memory_size() * 80 / 100;
-
-  // Find the total size of inputs and outputs.
-  int64_t total_io_size = 0;
-  for (HloInstruction* param :
-       module->entry_computation()->parameter_instructions()) {
-    ShapeUtil::ForEachSubshape(
-        param->shape(),
-        [&](const Shape& subshape, const ShapeIndex& /*index*/) {
-          total_io_size += GetSizeOfShape(subshape, pointer_size);
-        });
-  }
-  ShapeUtil::ForEachSubshape(
-      module->result_shape(),
-      [&](const Shape& subshape, const ShapeIndex& /*index*/) {
-        total_io_size += GetSizeOfShape(subshape, pointer_size);
-      });
-
-  // If any inputs and outputs are aliased, do not double count them.
-  module->input_output_alias_config().ForEachAlias(
-      [&](const ShapeIndex& output_index,
-          const HloInputOutputAliasConfig::Alias&) {
-        const Shape& subshape =
-            ShapeUtil::GetSubshape(module->result_shape(), output_index);
-        total_io_size -= GetSizeOfShape(subshape, pointer_size);
-      });
-
-  int64_t limit =
-      (base_limit - total_io_size) *
+          : gpu_device_info.device_memory_size() * PJRT_ALLOCATOR_FRACTION;
+  int64_t limit = 
+      base_limit *
       module->config().debug_options().xla_gpu_memory_limit_slop_factor() / 100;
   return limit;
 }
