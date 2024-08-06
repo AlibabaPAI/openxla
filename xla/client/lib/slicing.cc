@@ -281,11 +281,6 @@ XlaOp TorchIndexSelect(XlaOp input, XlaOp index, int64_t dim,
           "Gather dim must be greater than or equal to the number of batch "
           "dims");
     }
-    if (ShapeUtil::ElementHasBitWidth(index_shape, 64) &&
-        input_shape.dimensions(dim) < std::numeric_limits<uint32_t>::max()) {
-      index = ConvertElementType(index, U32);
-      index_shape.set_element_type(U32);
-    }
     std::vector<int64_t> slice_sizes = SpanToVector(input_shape.dimensions());
     GatherDimensionNumbers gather_dnums;
     gather_dnums.set_index_vector_dim(index_shape.rank());
