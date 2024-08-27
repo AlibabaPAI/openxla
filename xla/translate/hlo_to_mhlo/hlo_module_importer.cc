@@ -22,13 +22,14 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
+#include "mlir/Dialect/Arith/IR/Arith.h"   // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Quant/QuantOps.h"  // from @llvm-project
-#include "mlir/IR/Attributes.h"  // from @llvm-project
-#include "mlir/IR/Builders.h"  // from @llvm-project
-#include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
-#include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/Attributes.h"           // from @llvm-project
+#include "mlir/IR/Builders.h"             // from @llvm-project
+#include "mlir/IR/BuiltinAttributes.h"    // from @llvm-project
+#include "mlir/IR/BuiltinOps.h"           // from @llvm-project
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -51,6 +52,7 @@ HloModuleImporter::HloModuleImporter(mlir::ModuleOp module,
   module.getContext()->loadDialect<mlir::mhlo::MhloDialect>();
   module.getContext()->loadDialect<mlir::quant::QuantizationDialect>();
   module.getContext()->loadDialect<mlir::quant::QuantizationDialect>();
+  module.getContext()->loadDialect<mlir::tensor::TensorDialect>();
 }
 
 namespace {

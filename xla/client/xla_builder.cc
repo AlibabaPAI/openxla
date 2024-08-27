@@ -112,6 +112,25 @@ bool InstrIsSetBound(const HloInstructionProto* instr_proto) {
   return false;
 }
 
+bool IsDISCBackend() {
+  char* env = getenv("DISC_DEVICE");
+  if (env == nullptr) {
+    return false;
+  }
+  return true;
+}
+
+StatusOr<XlaOp> CreateShapeTensor(const std::vector<XlaOp>& size_ops) {
+  CHECK(!size_ops.empty()) << "size_ops should not be empty";
+  auto front = size_ops.front();
+  TF_ASSIGN_OR_RETURN(const Shape* shape, front.builder()->GetShapePtr(front));
+  Shape result_shape =
+      ShapeUtil::MakeShape(shape->element_type(), {size_ops.size()});
+  return CustomCall(front.builder(), "tensor.from_elements",
+                    /*operands=*/size_ops,
+                    /*shape*/ result_shape);
+}
+
 }  // namespace
 
 namespace internal {
@@ -1004,8 +1023,8 @@ namespace {
 // Does not broadcast rank dimensions to match, only expands rank.
 // Is identity function if origin rank matches target rank.
 StatusOr<XlaOp> BroadcastToTargetRank(
-    XlaOp origin, const Shape& origin_shape, const Shape& target_shape,
-    absl::Span<const int64_t> broadcast_dimensions) {
+    XlaOp origin, XlaOp other_operand, const Shape& origin_shape,
+    const Shape& target_shape, absl::Span<const int64_t> broadcast_dimensions) {
   if (ShapeUtil::IsScalar(origin_shape)) {
     return origin;
   }
@@ -1026,6 +1045,43 @@ StatusOr<XlaOp> BroadcastToTargetRank(
     int64_t target_dim = broadcast_dimensions[origin_dim];
     target_size[target_dim] = origin_shape.dimensions(origin_dim);
   }
+
+  TF_ASSIGN_OR_RETURN(const Shape* other_operand_shape,
+                      other_operand.builder()->GetShapePtr(other_operand));
+
+  if (IsDISCBackend() &&
+      (origin_shape.is_dynamic() || target_shape.is_dynamic())) {
+    std::vector<XlaOp> get_dim_ops;
+    get_dim_ops.resize(target_rank);
+    std::vector<bool> dynamic_dims(target_rank, false);
+    for (int64_t origin_dim = 0; origin_dim < origin_rank; origin_dim++) {
+      int64_t target_dim = broadcast_dimensions[origin_dim];
+      if (target_shape.is_dynamic_dimension(target_dim)) {
+        TF_RET_CHECK(origin_shape.is_dynamic_dimension(origin_dim));
+        get_dim_ops[target_dim] = GetDimensionSize(origin, origin_dim);
+        dynamic_dims[target_dim] = true;
+      }
+    }
+    for (int64_t dim = 0; dim < target_rank; dim++) {
+      if (target_shape.is_dynamic_dimension(dim)) {
+        if (!(dynamic_dims[dim])) {
+          TF_RET_CHECK(other_operand_shape->is_dynamic_dimension(dim));
+          dynamic_dims[dim] = true;
+          get_dim_ops[dim] = GetDimensionSize(other_operand, dim);
+        }
+      } else {
+        get_dim_ops[dim] =
+            ConstantR0(origin.builder(),
+                       static_cast<int32_t>(target_shape.dimensions(dim)));
+      }
+    }
+    TF_ASSIGN_OR_RETURN(XlaOp dim_op, CreateShapeTensor(get_dim_ops));
+    xla::Shape target_shape = ShapeUtil::MakeShape(origin_shape.element_type(),
+                                                   target_size, dynamic_dims);
+    return xla::DynamicBroadcastInDim(origin, dim_op, broadcast_dimensions,
+                                      target_shape);
+  }
+
   return xla::BroadcastInDim(origin, target_size, broadcast_dimensions);
 }
 
@@ -1047,6 +1103,48 @@ absl::StatusOr<std::vector<XlaOp>> ExtractDimensionSizesAndPadOnesToLeft(
             : xla::Reshape(xla::GetDimensionSize(op, i), {1}));
   }
   return op_dims;
+}
+
+absl::StatusOr<XlaOp> CreateShapeTensorWithPadOnesToLeft(XlaBuilder* builder,
+                                                         XlaOp op,
+                                                         size_t num_dims,
+                                                         int pad_count) {
+  TF_ASSIGN_OR_RETURN(const Shape* op_shape, builder->GetShapePtr(op));
+  std::vector<XlaOp> op_dims(pad_count,
+                             xla::ConstantR0(builder, static_cast<int32_t>(1)));
+  for (size_t i = 0; i < num_dims; i++) {
+    op_dims.push_back(
+        op_shape->is_static_dimension(i)
+            ? ConstantR0(builder, static_cast<int32_t>(op_shape->dimensions(i)))
+            : xla::GetDimensionSize(op, i));
+  }
+  return CreateShapeTensor(op_dims);
+}
+
+absl::StatusOr<XlaOp> CreateOutputShapeTensor(XlaOp op) {
+  XlaBuilder* builder = op.builder();
+  TF_ASSIGN_OR_RETURN(const Shape* op_shape, builder->GetShapePtr(op));
+  std::vector<XlaOp> op_dims;
+  for (size_t i = 0; i < op_shape->rank(); i++) {
+    op_dims.push_back(
+        op_shape->is_static_dimension(i)
+            ? ConstantR0(builder, static_cast<int32_t>(op_shape->dimensions(i)))
+            : xla::GetDimensionSize(op, i));
+  }
+  return CreateShapeTensor(op_dims);
+}
+
+absl::StatusOr<XlaOp> BroadcastScalarToOutputShapeWithDynamic(
+    XlaBuilder* builder, XlaOp scalar, XlaOp output,
+    const Shape& output_shape) {
+  TF_ASSIGN_OR_RETURN(const Shape* scalar_shape, builder->GetShapePtr(scalar));
+  CHECK(ShapeUtil::IsScalar(*scalar_shape));
+  TF_ASSIGN_OR_RETURN(XlaOp shape_tensor,
+                      CreateShapeTensorWithPadOnesToLeft(
+                          builder, output, output_shape.rank(), 0));
+
+  return xla::DynamicBroadcastInDim(scalar, /*output_dimensions=*/shape_tensor,
+                                    {}, output_shape);
 }
 
 // Broadcast `scalar` to `output_shape` with all shapes static at runtime. If a
@@ -1130,6 +1228,48 @@ absl::StatusOr<UnboundedBroadcastResult> BroadcastToOutputShapeWithUnbounded(
   return UnboundedBroadcastResult{lhs_result, rhs_result};
 }
 
+absl::StatusOr<UnboundedBroadcastResult> BroadcastToOutputShapeWithBounded(
+    XlaBuilder* builder, XlaOp lhs, const Shape& lhs_shape, XlaOp rhs,
+    const Shape rhs_shape, const Shape& output_shape,
+    absl::Span<const int64_t> broadcast_dimensions) {
+  const int64_t lhs_rank = lhs_shape.rank();
+  const int64_t rhs_rank = rhs_shape.rank();
+  const int64_t output_rank = output_shape.rank();
+
+  // If the rank of the op is less than the output rank, pad the dimension
+  // sizes of the op with 1's to match the output rank.
+  TF_ASSIGN_OR_RETURN(XlaOp lhs_dims,
+                      CreateShapeTensorWithPadOnesToLeft(
+                          builder, lhs, lhs_rank, output_rank - lhs_rank));
+  TF_ASSIGN_OR_RETURN(XlaOp rhs_dims,
+                      CreateShapeTensorWithPadOnesToLeft(
+                          builder, rhs, rhs_rank, output_rank - rhs_rank));
+  XlaOp lhs_result = lhs;
+  XlaOp rhs_result = rhs;
+  if (lhs_shape == output_shape) {
+    TF_ASSIGN_OR_RETURN(rhs_result, DegenerateBroadcastWithUnbounded(
+                                        builder, rhs, lhs_dims, output_shape));
+  } else if (rhs_shape == output_shape) {
+    TF_ASSIGN_OR_RETURN(lhs_result, DegenerateBroadcastWithUnbounded(
+                                        builder, lhs, rhs_dims, output_shape));
+  } else {
+    // The output dimensions of the dynamic broadcast is the maximum of the
+    // input shapes. The `output_dimensions` refer to the runtime shape and
+    // should not contain any dynamic sizes at run time.
+    XlaOp output_dimensions = Max(lhs_dims, rhs_dims);
+
+    // Broadcast `lhs` and `rhs` to `output_shape`.
+    TF_ASSIGN_OR_RETURN(lhs_result,
+                        DegenerateBroadcastWithUnbounded(
+                            builder, lhs, output_dimensions, output_shape));
+    TF_ASSIGN_OR_RETURN(rhs_result,
+                        DegenerateBroadcastWithUnbounded(
+                            builder, rhs, output_dimensions, output_shape));
+  }
+
+  return UnboundedBroadcastResult{lhs_result, rhs_result};
+}
+
 }  // namespace
 
 XlaOp XlaBuilder::BinaryOp(HloOpcode binop, XlaOp lhs, XlaOp rhs,
@@ -1149,25 +1289,40 @@ XlaOp XlaBuilder::BinaryOp(HloOpcode binop, XlaOp lhs, XlaOp rhs,
         !rhs_shape->is_unbounded_dynamic()) {
       if (lhs_shape->rank() < shape.rank()) {
         TF_ASSIGN_OR_RETURN(updated_lhs,
-                            BroadcastToTargetRank(lhs, *lhs_shape, shape,
+                            BroadcastToTargetRank(lhs, rhs, *lhs_shape, shape,
                                                   broadcast_dimensions));
       }
       if (rhs_shape->rank() < shape.rank()) {
         TF_ASSIGN_OR_RETURN(updated_rhs,
-                            BroadcastToTargetRank(rhs, *rhs_shape, shape,
+                            BroadcastToTargetRank(rhs, lhs, *rhs_shape, shape,
                                                   broadcast_dimensions));
       }
       TF_ASSIGN_OR_RETURN(const Shape* updated_lhs_shape,
                           GetShapePtr(updated_lhs));
       TF_ASSIGN_OR_RETURN(const Shape* updated_rhs_shape,
                           GetShapePtr(updated_rhs));
-      if (!ShapeUtil::SameDimensions(shape, *updated_lhs_shape)) {
-        TF_ASSIGN_OR_RETURN(updated_lhs,
-                            AddBroadcastSequence(shape, updated_lhs));
-      }
-      if (!ShapeUtil::SameDimensions(shape, *updated_rhs_shape)) {
-        TF_ASSIGN_OR_RETURN(updated_rhs,
-                            AddBroadcastSequence(shape, updated_rhs));
+      if (IsDISCBackend() && shape.is_dynamic()) {
+        if (!ShapeUtil::SameDimensions(*updated_lhs_shape,
+                                       *updated_rhs_shape)) {
+          Shape output_shape = shape;
+          output_shape.set_element_type(lhs_shape->element_type());
+          TF_ASSIGN_OR_RETURN(
+              UnboundedBroadcastResult broadcast_result,
+              BroadcastToOutputShapeWithBounded(
+                  this, updated_lhs, *updated_lhs_shape, updated_rhs,
+                  *updated_rhs_shape, output_shape, broadcast_dimensions));
+          updated_lhs = broadcast_result.lhs;
+          updated_rhs = broadcast_result.rhs;
+        }
+      } else {
+        if (!ShapeUtil::SameDimensions(shape, *updated_lhs_shape)) {
+          TF_ASSIGN_OR_RETURN(updated_lhs,
+                              AddBroadcastSequence(shape, updated_lhs));
+        }
+        if (!ShapeUtil::SameDimensions(shape, *updated_rhs_shape)) {
+          TF_ASSIGN_OR_RETURN(updated_rhs,
+                              AddBroadcastSequence(shape, updated_rhs));
+        }
       }
     } else {
       if (ShapeUtil::IsScalar(*lhs_shape) || ShapeUtil::IsScalar(*rhs_shape)) {
@@ -1254,6 +1409,13 @@ absl::StatusOr<XlaOp> XlaBuilder::BroadcastScalarToOutputShape(XlaOp scalar,
     output_shape_copy.set_element_type(scalar_shape->element_type());
     TF_ASSIGN_OR_RETURN(updated_output,
                         BroadcastScalarToOutputShapeWithUnbounded(
+                            this, scalar, output, output_shape_copy));
+    return updated_output;
+  } else if (output_shape->is_dynamic()) {
+    Shape output_shape_copy = *output_shape;
+    output_shape_copy.set_element_type(scalar_shape->element_type());
+    TF_ASSIGN_OR_RETURN(updated_output,
+                        BroadcastScalarToOutputShapeWithDynamic(
                             this, scalar, output, output_shape_copy));
     return updated_output;
   }
@@ -1423,6 +1585,23 @@ XlaOp XlaBuilder::Broadcast(XlaOp operand,
     std::vector<int64_t> dimensions(operand_rank);
     for (int i = 0; i < operand_rank; ++i) {
       dimensions[i] = i + shape.rank() - operand_rank;
+    }
+
+    if (IsDISCBackend() && shape.is_dynamic()) {
+      std::vector<XlaOp> get_dim_ops;
+      for (int dim = 0; dim < shape.rank(); dim++) {
+        if (shape.is_dynamic_dimension(dim)) {
+          TF_RET_CHECK(dim >= broadcast_sizes.size()) << "unreachable code";
+          get_dim_ops.push_back(
+              GetDimensionSize(operand, dim - broadcast_sizes.size()));
+        } else {
+          get_dim_ops.push_back(ConstantR0(
+              operand.builder(), static_cast<int32_t>(shape.dimensions(dim))));
+        }
+      }
+
+      TF_ASSIGN_OR_RETURN(XlaOp dim_op, CreateShapeTensor(get_dim_ops));
+      return DynamicBroadcastInDim(operand, dim_op, dimensions, shape);
     }
     return InDimBroadcast(shape, operand, dimensions);
   });
@@ -5709,6 +5888,74 @@ XlaOp SetDimensionSize(const XlaOp operand, const XlaOp val,
 
 XlaOp RemoveDynamicDimension(const XlaOp operand, int64_t dimension) {
   return operand.builder()->RemoveDynamicDimension(operand, dimension);
+}
+
+StatusOr<XlaOp> DynamicBroadcastScalarToOutputShape(XlaOp scalar,
+                                                    XlaOp output) {
+  XlaBuilder* builder = scalar.builder();
+  TF_ASSIGN_OR_RETURN(const Shape* scalar_shape, builder->GetShapePtr(scalar));
+  CHECK(ShapeUtil::IsScalar(*scalar_shape));
+  TF_ASSIGN_OR_RETURN(const Shape* output_shape, builder->GetShapePtr(output));
+  TF_ASSIGN_OR_RETURN(XlaOp shape_tensor, CreateOutputShapeTensor(output));
+
+  return xla::DynamicBroadcastInDim(scalar, /*output_dimensions=*/shape_tensor,
+                                    {}, *output_shape);
+}
+
+XlaOp DynamicIota(XlaOp size, const xla::Shape& shape) {
+  xla::XlaOp size_1d_tensor = xla::Reshape(size, {1});
+  return xla::CustomCall(size.builder(), "mhlo.dynamic_iota",
+                         /*operands=*/{size_1d_tensor}, /*shape=*/shape,
+                         /*opaque=*/"{iota_dimension=0}");
+}
+
+StatusOr<XlaOp> DynamicBroadcast(
+    XlaOp operand, absl::Span<const int64_t> broadcast_sizes,
+    const std::vector<XlaOp>& dim_ops,
+    const std::vector<bool>& broadcast_dynamic_dims) {
+  XlaBuilder* builder = operand.builder();
+  TF_ASSIGN_OR_RETURN(const Shape* operand_shape,
+                      builder->GetShapePtr(operand));
+  TF_ASSIGN_OR_RETURN(Shape shape, ShapeInference::InferBroadcastShape(
+                                       *operand_shape, broadcast_sizes));
+  TF_RET_CHECK(dim_ops.size() == broadcast_sizes.size())
+      << "broadcast_dynamic_dims should have the same size with "
+         "broadcast_sizes";
+  TF_RET_CHECK(broadcast_dynamic_dims.size() == broadcast_sizes.size())
+      << "broadcast_dynamic_dims should have the same size with "
+         "broadcast_sizes";
+  for (int i = 0; i < broadcast_sizes.size(); ++i) {
+    shape.set_dynamic_dimension(i, broadcast_dynamic_dims[i]);
+  }
+
+  // The client-level broadcast op just appends dimensions on the left (adds
+  // lowest numbered dimensions). The HLO broadcast instruction is more
+  // flexible and can add new dimensions anywhere. The instruction's
+  // dimensions field maps operand dimensions to dimensions in the broadcast
+  // output, so to append dimensions on the left the instruction's dimensions
+  // should just be the n highest dimension numbers of the output shape where
+  // n is the number of input dimensions.
+  const int64_t operand_rank = operand_shape->rank();
+  std::vector<int64_t> dimensions(operand_rank);
+  for (int i = 0; i < operand_rank; ++i) {
+    dimensions[i] = i + shape.rank() - operand_rank;
+  }
+
+  std::vector<XlaOp> get_dim_ops;
+  get_dim_ops.insert(get_dim_ops.begin(), dim_ops.begin(), dim_ops.end());
+
+  for (int dim = broadcast_sizes.size(); dim < shape.rank(); dim++) {
+    if (shape.is_dynamic_dimension(dim)) {
+      get_dim_ops.push_back(
+          GetDimensionSize(operand, dim - broadcast_sizes.size()));
+    } else {
+      get_dim_ops.push_back(ConstantR0(
+          operand.builder(), static_cast<int32_t>(shape.dimensions(dim))));
+    }
+  }
+
+  TF_ASSIGN_OR_RETURN(XlaOp dim_op, CreateShapeTensor(get_dim_ops));
+  return DynamicBroadcastInDim(operand, dim_op, dimensions, shape);
 }
 
 OpSharding GetManualSharding(const OpSharding& original, int64_t single_dim) {

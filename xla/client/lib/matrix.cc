@@ -223,6 +223,50 @@ XlaOp TriangleMask(XlaOp x, int diagonal) {
     const int64_t n = shape.dimensions(n_dims - 1);
     absl::Span<const int64_t> major_dims =
         shape.dimensions().subspan(/*pos=*/0, /*len=*/n_dims - 2);
+    if (shape.is_dynamic()) {
+      XlaOp a;
+      if (shape.is_dynamic_dimension(n_dims - 1)) {
+        Shape out_shape(S32, {n}, {true}, {});
+        a = DynamicIota(GetDimensionSize(x, n_dims - 1), out_shape);
+      } else {
+        a = Iota(builder, S32, n);
+      }
+      XlaOp b;
+      if (shape.is_dynamic_dimension(n_dims - 2)) {
+        Shape out_shape(S32, {m}, {true}, {});
+        b = DynamicIota(GetDimensionSize(x, n_dims - 2), out_shape);
+        TF_ASSIGN_OR_RETURN(
+            a, DynamicBroadcast(a, {m}, {GetDimensionSize(x, n_dims - 2)},
+                                {true}));
+      } else {
+        b = Iota(builder, S32, m);
+        a = Broadcast(a, {m});
+      }
+      b = b + ConstantR0<int32_t>(builder, diagonal);
+      XlaOp indicator;
+
+      indicator = Ge(b, a, /*broadcast_dimensions=*/{0});
+      bool is_dynamic = false;
+      for (int i = 0; i < n_dims - 2; i++) {
+        if (shape.is_dynamic_dimension(i)) {
+          is_dynamic = true;
+          break;
+        }
+      }
+      if (is_dynamic) {
+        std::vector<XlaOp> op_dims;
+        std::vector<bool> dynamic_dims;
+        for (size_t i = 0; i < n_dims - 2; i++) {
+          op_dims.push_back(shape.is_static_dimension(i)
+                                ? ConstantR0(builder, static_cast<int32_t>(
+                                                          shape.dimensions(i)))
+                                : xla::GetDimensionSize(x, i));
+          dynamic_dims.push_back(shape.is_dynamic_dimension(i));
+        }
+        return DynamicBroadcast(indicator, major_dims, op_dims, dynamic_dims);
+      }
+      return Broadcast(indicator, major_dims);
+    }
     auto a = Iota(builder, S32, n);
     auto b = Iota(builder, S32, m) + ConstantR0<int32_t>(builder, diagonal);
     XlaOp indicator;
