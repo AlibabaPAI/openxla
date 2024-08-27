@@ -114,10 +114,7 @@ bool InstrIsSetBound(const HloInstructionProto* instr_proto) {
 
 bool IsDISCBackend() {
   char* env = getenv("DISC_DEVICE");
-  if (env == nullptr) {
-    return false;
-  }
-  return true;
+  return env != nullptr;
 }
 
 StatusOr<XlaOp> CreateShapeTensor(const std::vector<XlaOp>& size_ops) {
