@@ -38,6 +38,7 @@ limitations under the License.
 #include "llvm/Support/ErrorHandling.h"
 #include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
+#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Block.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
@@ -1911,6 +1912,48 @@ absl::StatusOr<mlir::Operation*> HloFunctionImporter::ImportInstructionImpl(
 
       // Return type is boolean, let's use `operand != 0` instead of Convert.
       Shape input_shape = instruction->operand(0)->shape();
+      if (input_shape.is_dynamic()) {
+        llvm::SmallVector<mlir::Value> shape_operands;
+        for (int i = 0; i < input_shape.rank(); i++) {
+          if (input_shape.is_dynamic_dimension(i)) {
+            llvm::SmallVector<NamedAttribute, 10> dim_attributes;
+            dim_attributes.push_back(func_builder->getNamedAttr(
+                "dimension", func_builder->getI64IntegerAttr(i)));
+            auto type =
+                mlir::RankedTensorType::get({}, func_builder->getI32Type());
+            auto get_dim = func_builder->create<mlir::mhlo::GetDimensionSizeOp>(
+                loc, type, operands[0], dim_attributes);
+            auto get_dim_size = func_builder->create<mlir::tensor::ExtractOp>(
+                loc, get_dim, mlir::ValueRange{});
+            shape_operands.push_back(get_dim_size);
+          } else {
+            auto dim = func_builder->create<mlir::mhlo::ConstantOp>(
+                loc, func_builder->getIntegerAttr(func_builder->getI32Type(),
+                                                  input_shape.dimensions(i)));
+            auto dim_size = func_builder->create<mlir::tensor::ExtractOp>(
+                loc, dim, mlir::ValueRange{});
+            shape_operands.push_back(dim_size);
+          }
+        }
+        auto shape_tensor = func_builder->create<mlir::tensor::FromElementsOp>(
+            loc, shape_operands);
+        TF_ASSIGN_OR_RETURN(auto type,
+                            ConvertPrimitiveTypeToMlirType(
+                                input_shape.element_type(), *func_builder));
+        auto zero = func_builder->create<mlir::mhlo::ConstantOp>(
+            loc, func_builder->getZeroAttr(type));
+
+        TF_ASSIGN_OR_RETURN(mlir::Type zero_type,
+                            ConvertTensorShapeToType<mlir::RankedTensorType>(
+                                input_shape, *func_builder));
+        auto zero_tensor =
+            func_builder->create<mlir::mhlo::DynamicBroadcastInDimOp>(
+                loc, zero_type, zero, shape_tensor,
+                func_builder->getI64TensorAttr(std::vector<int64_t>()));
+        return {func_builder->create<mlir::mhlo::CompareOp>(
+            loc, operands[0], zero_tensor,
+            mlir::mhlo::ComparisonDirection::NE)};
+      }
       TF_ASSIGN_OR_RETURN(mlir::Type type,
                           ConvertTensorShapeToType<mlir::RankedTensorType>(
                               input_shape, *func_builder));

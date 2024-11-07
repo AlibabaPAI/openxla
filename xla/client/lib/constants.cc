@@ -37,6 +37,10 @@ XlaOp ZerosLike(XlaOp prototype) {
   XlaBuilder* builder = prototype.builder();
   return builder->ReportErrorOrReturn([&]() -> absl::StatusOr<XlaOp> {
     TF_ASSIGN_OR_RETURN(Shape shape, builder->GetShape(prototype));
+    if (shape.is_dynamic()) {
+      return xla::DynamicBroadcastScalarToOutputShape(
+          Zero(builder, shape.element_type()), prototype);
+    }
     return Zeros(builder, shape);
   });
 }

@@ -22,6 +22,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/AsmParser/AsmParser.h"  // from @llvm-project
 #include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
+#include "mlir/Dialect/Tensor/IR/Tensor.h"  // from @llvm-project
 #include "mlir/IR/Attributes.h"  // from @llvm-project
 #include "mlir/IR/Builders.h"  // from @llvm-project
 #include "mlir/IR/BuiltinAttributes.h"  // from @llvm-project
@@ -79,6 +80,22 @@ absl::StatusOr<mlir::Operation*> ImportDynamicReshapeOp(
   }
   return builder
       ->create<mlir::mhlo::DynamicReshapeOp>(loc, result_type, operands)
+      .getOperation();
+}
+
+absl::StatusOr<mlir::Operation*> ImportDynamicIotaOp(
+    mlir::DictionaryAttr backend_attr, mlir::Location loc,
+    mlir::Type result_type, mlir::ValueRange operands,
+    mlir::OpBuilder* builder) {
+  auto iota_dimension_attr =
+      backend_attr.get("iota_dimension").dyn_cast_or_null<mlir::IntegerAttr>();
+  if (!iota_dimension_attr) {
+    return Internal("iota_dimension attribute is required.");
+  }
+
+  return builder
+      ->create<mlir::mhlo::DynamicIotaOp>(loc, result_type, operands[0],
+                                          iota_dimension_attr)
       .getOperation();
 }
 
@@ -175,6 +192,16 @@ absl::StatusOr<mlir::Operation*> ImportCustomCallAsOp(
                                     operands, builder);
   }
 
+  if (custom_call_target == "tensor.from_elements") {
+    llvm::SmallVector<mlir::Value> shape_operands;
+    for (auto op : operands) {
+      shape_operands.push_back(builder->create<mlir::tensor::ExtractOp>(
+          loc, op, mlir::ValueRange{}));
+    }
+    return builder->create<mlir::tensor::FromElementsOp>(loc, shape_operands)
+        .getOperation();
+  }
+
   auto backend_config =
       mlir::parseAttribute(backend_config_str, builder->getContext())
           .dyn_cast<mlir::DictionaryAttr>();
@@ -199,12 +226,19 @@ absl::StatusOr<mlir::Operation*> ImportCustomCallAsOp(
         ->create<mlir::mhlo::UniformDequantizeOp>(loc, result_type, operands)
         .getOperation();
   }
+
+  if (custom_call_target == "mhlo.dynamic_iota") {
+    return ImportDynamicIotaOp(backend_config, loc, result_type, operands,
+                               builder);
+  }
+
   return InvalidArgument("Unsupported MHLO op custom_call %s",
                          custom_call_target);
 }
 
 bool IsOpEncodedCustomCall(const HloCustomCallInstruction* instruction) {
-  return absl::StartsWith(instruction->custom_call_target(), "mhlo.");
+  return absl::StartsWith(instruction->custom_call_target(), "mhlo.") ||
+         absl::StartsWith(instruction->custom_call_target(), "tensor.");
 }
 
 }  // namespace xla

@@ -2926,6 +2926,15 @@ XlaOp SetDimensionSize(XlaOp operand, XlaOp val, int64_t dimension);
 // Returns the same op but with dynamic dimension removed.
 XlaOp RemoveDynamicDimension(XlaOp operand, int64_t dimension);
 
+StatusOr<XlaOp> DynamicBroadcastScalarToOutputShape(XlaOp scalar, XlaOp output);
+
+XlaOp DynamicIota(XlaOp size, const xla::Shape& shape);
+
+StatusOr<XlaOp> DynamicBroadcast(
+    XlaOp operand, absl::Span<const int64_t> broadcast_sizes,
+    const std::vector<XlaOp>& dim_ops,
+    const std::vector<bool>& broadcast_dynamic_dims);
+
 // Implementation details below this point.
 //
 
