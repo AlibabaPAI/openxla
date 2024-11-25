@@ -240,6 +240,12 @@ class PjRtDevice {
         "GPU");
   }
 
+  virtual StatusOr<std::intptr_t> GetLocalComputeStream() const {
+    return Unimplemented(
+        "PjRtDevice::GetLocalComputeStream only implemented for "
+        "GPU");
+  }
+
   // Experimental: Poisons the earliest execution on this device with given
   // launch_id if it's not finished yet, i.e. makes its output buffers error.
   //

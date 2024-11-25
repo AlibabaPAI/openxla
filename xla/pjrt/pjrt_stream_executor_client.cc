@@ -1270,6 +1270,20 @@ PjRtStreamExecutorDevice::GetStreamForExternalReadyEvents() const {
   return absl::bit_cast<std::intptr_t>(raw_stream);
 }
 
+StatusOr<std::intptr_t>
+PjRtStreamExecutorDevice::GetLocalComputeStream() const {
+  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device, GetLocalDeviceState());
+  se::Stream* stream = local_device->compute_stream();
+  void* raw_stream = stream->platform_specific_handle().stream;
+  if (raw_stream == nullptr) {
+    return Unimplemented(
+        "GetStreamForExternalReadyEvents not implemented for platform '%s'.",
+        platform_name());
+  }
+  return absl::bit_cast<std::intptr_t>(raw_stream);
+}
+
+
 StatusOr<PjRtDevice*> PjRtStreamExecutorClient::LookupAddressableDevice(
     int local_hardware_id) const {
   return LookupAddressableDevice(PjRtLocalDeviceId(local_hardware_id));
