@@ -66,9 +66,10 @@ static StatusOr<TypeT> ConvertTensorShapeToType(const Shape& xla_ty,
   }
   using mlir::mhlo::TypeExtensionsAttr;
   mlir::Attribute encoding;
-  if (is_bounded_dynamic) {
-    encoding = TypeExtensionsAttr::get(builder.getContext(), bounds);
-  }
+  // Temporarily disable bound information of MHLO for BladeDISC backend.
+  // if (is_bounded_dynamic) {
+  //   encoding = TypeExtensionsAttr::get(builder.getContext(), bounds);
+  // }
 
   using mlir::sparse_tensor::SparseTensorEncodingAttr;
   // TODO(b/238903065): We don't yet support bounded dynamism shapes and
