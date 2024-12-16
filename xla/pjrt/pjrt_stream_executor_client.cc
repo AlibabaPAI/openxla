@@ -1271,16 +1271,31 @@ PjRtStreamExecutorDevice::GetStreamForExternalReadyEvents() const {
 }
 
 StatusOr<std::intptr_t>
-PjRtStreamExecutorDevice::GetLocalComputeStream() const {
+PjRtStreamExecutorDevice::GetLocalComputeStreamId() const {
   TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device, GetLocalDeviceState());
   se::Stream* stream = local_device->compute_stream();
   void* raw_stream = stream->platform_specific_handle().stream;
   if (raw_stream == nullptr) {
     return Unimplemented(
-        "GetStreamForExternalReadyEvents not implemented for platform '%s'.",
+        "GetLocalComputeStreamId not implemented for platform '%s'.",
         platform_name());
   }
   return absl::bit_cast<std::intptr_t>(raw_stream);
+}
+
+Status PjRtStreamExecutorDevice::WaitLocalComputeStream() const {
+  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device, GetLocalDeviceState());
+  se::Stream* stream = local_device->compute_stream();
+  void* raw_stream = stream->platform_specific_handle().stream;
+  if (raw_stream == nullptr) {
+    return Unimplemented(
+        "GetLocalComputeStreamId not implemented for platform '%s'.",
+        platform_name());
+  }
+
+  Status blocking_status = stream->BlockHostUntilDone();
+  TF_RETURN_IF_ERROR(blocking_status);
+  return blocking_status;
 }
 
 
@@ -2230,6 +2245,21 @@ PjRtStreamExecutorLoadedExecutable::ParametersThatMustBeDonated(
   return parameters_that_must_be_donated_[executable_idx];
 }
 
+StatusOr<std::vector<int64_t>> PjRtStreamExecutorLoadedExecutable::GetAliasedParams(int executable_idx, int64_t num_inputs, int64_t num_outputs) const {
+  const HloInputOutputAliasConfig& config = executables_[executable_idx]->executable()->module().input_output_alias_config();
+  std::vector<int64_t> aliased_params;
+  aliased_params.reserve(num_outputs);
+
+  for (int i = 0; i < num_outputs; i++) {
+    std::optional<HloInputOutputAliasConfig::Alias> aliased_param =
+        config.GetAliasedParameter({i});
+    aliased_params.push_back((aliased_param->parameter_number < num_inputs) ? aliased_param->parameter_number : -1);
+  }
+  
+  return aliased_params;
+}
+
+
 StatusOr<std::vector<ExecutionInput>>
 PjRtStreamExecutorLoadedExecutable::MakeExecutionInputsAndWaitForEvents(
     int device_ordinal, const ExecuteOptions& options,
@@ -2539,6 +2569,7 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
     std::vector<PjRtStreamExecutorBuffer::ScopedHold>* device_buffers,
     std::shared_ptr<DeviceAssignment> device_assignment,
     std::vector<std::function<void()>>& compute_callbacks) const {
+  VLOG(0) << "EnqueueExecution Begin";
   int device_ordinal = tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
                            ->local_device_state()
                            ->local_device_id()
@@ -2691,6 +2722,7 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
       executables_[executable_idx]->RunAsync(std::move(execution_inputs),
                                              run_options);
 
+  VLOG(0) << "EnqueueExecution Wait end";
   VLOG(1) << "Replica " << replica << " partition " << partition
           << " completed; ok=" << result_buffer_or_status.ok();
 
@@ -2780,6 +2812,7 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
     absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
     const RunId& run_id, const ExecuteOptions& options, bool fill_future,
     PjRtDevice* device) const {
+  VLOG(0) << "ExecuteHelper Begin";
   const uint64_t start_time_usecs = tsl::Env::Default()->NowMicros();
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
@@ -2827,6 +2860,20 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
   se::Stream* stream = device_state->compute_stream();
   StatusOr<EventPool::Handle> event_or =
       device_state->event_pool().ThenAllocateAndRecordEvent(stream);
+
+  std::vector<std::function<void()>> input_call_back_functions;
+  std::vector<int64_t> AliasedParam = GetAliasedParams(executable_idx, argument_handles.size(), result_buffer.on_device_shape().tuple_shapes_size()).value();
+
+  input_call_back_functions.reserve(device_buffers.size());
+
+  for (auto it : AliasedParam) {
+    if (it == -1)
+      continue;
+    PjRtStreamExecutorBuffer::ScopedHold& device_buffer = device_buffers[it];
+    auto input_buffer = device_buffer.buffer();
+    input_call_back_functions.push_back(std::move(input_buffer->get_on_delete_callback()));
+  }
+
   if (!event_or.ok()) {
     StallStreamOnError(device_state, stream);
     for (PjRtStreamExecutorBuffer::ScopedHold& b : device_buffers) {
@@ -2846,6 +2893,14 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
   std::vector<std::unique_ptr<PjRtBuffer>> outputs = MakeOutputBuffers(
       device_ordinal, options, std::move(result_buffer), definition_event,
       device, compute_callbacks, buffers_to_release);
+
+  if (input_call_back_functions.size()) {
+    for (int i = 0; i < outputs.size(); i++) {
+      auto output_buffer = dynamic_cast<PjRtStreamExecutorBuffer*>(outputs[i].get())
+      ->GetBufferWithHold(PjRtStreamExecutorBuffer::ScopedHold::kUsage).buffer();
+      output_buffer->set_on_delete_callback(input_call_back_functions[i]);
+    }
+  }
 
   for (PjRtStreamExecutorBuffer::ScopedHold& b : device_buffers) {
     // prefer_to_retain_reference=false because when using the
@@ -2876,6 +2931,9 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
           fn();
         }
       }));
+
+  VLOG(0) << "ExecuteHelper End" << " future: " << future->IsReady();
+
   metrics::ReportExecutableEnqueueTime(tsl::Env::Default()->NowMicros() -
                                        start_time_usecs);
   return Result({/*future=*/std::move(future), /*buffers=*/std::move(outputs)});
