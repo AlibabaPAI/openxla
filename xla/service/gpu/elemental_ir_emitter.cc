@@ -69,6 +69,7 @@ absl::StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitDeviceMathCall(
   // Device functions don't have f16 math functions, so we convert the operands
   // to f32 before calling the function and then convert the result back to f16.
   bool cast_result_to_fp16 = false;
+  bool cast_result_to_bf16 = false;
   std::vector<llvm::Value*> converted_operands(operands.begin(),
                                                operands.end());
   std::vector<PrimitiveType> converted_input_types(input_types.begin(),
@@ -87,6 +88,17 @@ absl::StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitDeviceMathCall(
       [[fallthrough]];
     case F32:
       break;
+    case BF16:
+      cast_result_to_bf16 = true;
+      for (int64_t i = 0; i < operands.size(); ++i) {
+        if (input_types[i] == BF16) {
+          converted_operands[i] =
+              FPCast(converted_operands[i], b()->getFloatTy());
+          converted_input_types[i] = F32;
+        }
+      }
+      output_type = F32;
+      break;
     case F64:
       break;
     default:
@@ -101,6 +113,8 @@ absl::StatusOr<llvm::Value*> GpuElementalIrEmitter::EmitDeviceMathCall(
                             .value();
   if (cast_result_to_fp16) {
     result = FPCast(result, b()->getHalfTy());
+  } else if (cast_result_to_bf16) {
+    result = FPCast(result, b()->getBFloatTy());
   }
   return result;
 }
