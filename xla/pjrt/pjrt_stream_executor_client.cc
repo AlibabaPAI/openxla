@@ -1271,16 +1271,21 @@ PjRtStreamExecutorDevice::GetStreamForExternalReadyEvents() const {
 }
 
 StatusOr<std::intptr_t>
-PjRtStreamExecutorDevice::GetLocalComputeStreamId() const {
+PjRtStreamExecutorDevice::GetLocalComputeStream() const {
   TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device, GetLocalDeviceState());
   se::Stream* stream = local_device->compute_stream();
   void* raw_stream = stream->platform_specific_handle().stream;
   if (raw_stream == nullptr) {
     return Unimplemented(
-        "GetLocalComputeStreamId not implemented for platform '%s'.",
+        "GetLocalComputeStream not implemented for platform '%s'.",
         platform_name());
   }
   return absl::bit_cast<std::intptr_t>(raw_stream);
+}
+
+Status PjRtStreamExecutorDevice::SetLocalComputeStream(std::intptr_t stream) const {
+  TF_ASSIGN_OR_RETURN(LocalDeviceState * local_device, GetLocalDeviceState());
+  return local_device->SetStreamFromExternalStream(stream);
 }
 
 Status PjRtStreamExecutorDevice::WaitLocalComputeStream() const {
@@ -1289,12 +1294,11 @@ Status PjRtStreamExecutorDevice::WaitLocalComputeStream() const {
   void* raw_stream = stream->platform_specific_handle().stream;
   if (raw_stream == nullptr) {
     return Unimplemented(
-        "GetLocalComputeStreamId not implemented for platform '%s'.",
+        "WaitLocalComputeStream not implemented for platform '%s'.",
         platform_name());
   }
 
   Status blocking_status = stream->BlockHostUntilDone();
-  TF_RETURN_IF_ERROR(blocking_status);
   return blocking_status;
 }
 
@@ -2569,7 +2573,6 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
     std::vector<PjRtStreamExecutorBuffer::ScopedHold>* device_buffers,
     std::shared_ptr<DeviceAssignment> device_assignment,
     std::vector<std::function<void()>>& compute_callbacks) const {
-  VLOG(0) << "EnqueueExecution Begin";
   int device_ordinal = tensorflow::down_cast<PjRtStreamExecutorDevice*>(device)
                            ->local_device_state()
                            ->local_device_id()
@@ -2722,7 +2725,6 @@ PjRtStreamExecutorLoadedExecutable::EnqueueExecution(
       executables_[executable_idx]->RunAsync(std::move(execution_inputs),
                                              run_options);
 
-  VLOG(0) << "EnqueueExecution Wait end";
   VLOG(1) << "Replica " << replica << " partition " << partition
           << " completed; ok=" << result_buffer_or_status.ok();
 
@@ -2812,7 +2814,6 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
     absl::Span<PjRtBuffer* const> argument_handles, int replica, int partition,
     const RunId& run_id, const ExecuteOptions& options, bool fill_future,
     PjRtDevice* device) const {
-  VLOG(0) << "ExecuteHelper Begin";
   const uint64_t start_time_usecs = tsl::Env::Default()->NowMicros();
   std::shared_ptr<DeviceAssignment> device_assignment;
   if (device == nullptr) {
@@ -2862,11 +2863,13 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
       device_state->event_pool().ThenAllocateAndRecordEvent(stream);
 
   std::vector<std::function<void()>> input_call_back_functions;
-  std::vector<int64_t> AliasedParam = GetAliasedParams(executable_idx, argument_handles.size(), result_buffer.on_device_shape().tuple_shapes_size()).value();
+  std::vector<int64_t> AliasedParam = GetAliasedParams(executable_idx, argument_handles.size(),
+  result_buffer.on_device_shape().tuple_shapes_size()).value();
 
   input_call_back_functions.reserve(device_buffers.size());
 
   for (auto it : AliasedParam) {
+    // the input is not aliased with output
     if (it == -1)
       continue;
     PjRtStreamExecutorBuffer::ScopedHold& device_buffer = device_buffers[it];
@@ -2931,9 +2934,6 @@ PjRtStreamExecutorLoadedExecutable::ExecuteHelper(
           fn();
         }
       }));
-
-  VLOG(0) << "ExecuteHelper End" << " future: " << future->IsReady();
-
   metrics::ReportExecutableEnqueueTime(tsl::Env::Default()->NowMicros() -
                                        start_time_usecs);
   return Result({/*future=*/std::move(future), /*buffers=*/std::move(outputs)});

@@ -188,9 +188,11 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   StatusOr<std::intptr_t> GetStreamForExternalReadyEvents() const override;
 
-  StatusOr<std::intptr_t> GetLocalComputeStreamId() const override;
+  StatusOr<std::intptr_t> GetLocalComputeStream() const override;
 
-  virtual Status WaitLocalComputeStream() const override;
+  Status SetLocalComputeStream(std::intptr_t stream) const override;
+
+  Status WaitLocalComputeStream() const override;
   std::unique_ptr<ScopedAsyncTrackingEvent> CreateAsyncTrackingEvent(
       absl::string_view description) const override {
     return nullptr;

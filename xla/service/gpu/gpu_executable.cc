@@ -386,7 +386,6 @@ absl::Status ExecuteThunks(
     const absl::flat_hash_set<ExecutionStreamId>& execution_stream_ids,
     int64_t collective_max_nchannels, int64_t p2p_max_nchannels,
     const ModuleAnnotations& module_annotations) {
-  // VLOG(0) << tsl::CurrentStackTrace();
   se::Stream* main_stream = run_options->stream();
   se::StreamExecutor* executor = main_stream->parent();
   stream_executor::StreamPriority stream_priority =
@@ -830,7 +829,6 @@ absl::StatusOr<ScopedShapedBuffer> GpuExecutable::ExecuteAsyncOnStream(
 absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     const ServiceExecutableRunOptions* run_options,
     VariantArguments arguments) {
-  VLOG(0) << " ExecuteAsyncOnStreamImpl Begin";
   XLA_SCOPED_LOGGING_TIMER(absl::StrCat(
       "GpuExecutable::ExecuteAsyncOnStreamImpl(", module_name_, ")"));
   se::DeviceMemoryAllocator* const memory_allocator = run_options->allocator();
@@ -1000,8 +998,6 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
   if (auto args = std::get_if<absl::Span<ExecutionInput>>(&arguments)) {
     MarkToBeReleasedArguments(*args, result);
   }
-
-  VLOG(0) << " ExecuteAsyncOnStreamImpl End";
   return std::move(result);
 }
 

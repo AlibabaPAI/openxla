@@ -240,9 +240,15 @@ class PjRtDevice {
         "GPU");
   }
 
-  virtual StatusOr<std::intptr_t> GetLocalComputeStreamId() const {
+  virtual StatusOr<std::intptr_t> GetLocalComputeStream() const {
     return Unimplemented(
-        "PjRtDevice::GetLocalComputeStreamId only implemented for "
+        "PjRtDevice::GetLocalComputeStream only implemented for "
+        "GPU");
+  }
+
+  virtual Status SetLocalComputeStream(std::intptr_t stream) const {
+    return Unimplemented(
+        "PjRtDevice::SetLocalComputeStream only implemented for "
         "GPU");
   }
 
