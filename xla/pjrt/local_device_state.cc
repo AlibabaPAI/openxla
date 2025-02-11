@@ -191,6 +191,15 @@ StatusOr<se::Stream*> LocalDeviceState::GetStreamFromExternalStream(
       "used for dlpack imports are supported.");
 }
 
+Status LocalDeviceState::SetStreamFromExternalStream(std::intptr_t stream) {
+  // external ready event streams allocated by xla;
+  StatusOr<se::Stream*> external_stream = GetStreamFromExternalStream(stream);
+  if (external_stream.ok()) {
+    compute_stream_.reset(external_stream.value());
+  }
+  return external_stream.status();
+}
+
 std::vector<se::Stream*> LocalDeviceState::GetDeviceToDeviceStreams() {
   absl::MutexLock lock(&mu_);
   std::vector<se::Stream*> result;

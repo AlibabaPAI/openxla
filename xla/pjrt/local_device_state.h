@@ -148,6 +148,9 @@ class LocalDeviceState {
   // currently only used with external ready event streams.
   StatusOr<se::Stream*> GetStreamFromExternalStream(std::intptr_t stream);
 
+  // currently we cannot set stream allocated outside xla;
+  Status SetStreamFromExternalStream(std::intptr_t stream);
+
   // Returns a vector of device to device streams.
   std::vector<se::Stream*> GetDeviceToDeviceStreams();
 

@@ -246,6 +246,17 @@ class PjRtDevice {
         "GPU");
   }
 
+  virtual Status SetLocalComputeStream(std::intptr_t stream) const {
+    return Unimplemented(
+        "PjRtDevice::SetLocalComputeStream only implemented for "
+        "GPU");
+  }
+
+  virtual Status WaitLocalComputeStream() const {
+    return Unimplemented(
+        "PjRtDevice::WaitLocalComputeStream only implemented for "
+        "GPU");
+  }
   // Experimental: Poisons the earliest execution on this device with given
   // launch_id if it's not finished yet, i.e. makes its output buffers error.
   //
@@ -1423,6 +1434,11 @@ class PjRtLoadedExecutable : public PjRtExecutable {
   // addressable_device_logical_ids()[i] is assigned.
   virtual absl::Span<PjRtDevice* const> addressable_devices() const = 0;
 
+  virtual StatusOr<std::vector<int64_t>> GetAliasedParams(int executable_idx,
+                                            int64_t input_num,
+                                            int64_t output_num) const {
+    return Unimplemented("memory_space_by_kind not implemented");
+  }
   // Donation Semantics:
   //
   // The following Execute*() methods will donate the input buffer to the

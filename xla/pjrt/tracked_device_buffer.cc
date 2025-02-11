@@ -221,7 +221,7 @@ TrackedDeviceBuffer::TrackedDeviceBuffer(
     se::DeviceMemoryAllocator* allocator, int device_ordinal,
     absl::Span<se::DeviceMemoryBase const> device_memory,
     absl::Span<const std::shared_ptr<BufferSequencingEvent>> definition_events,
-    absl::AnyInvocable<void() &&> on_delete_callback)
+    std::function<void()> on_delete_callback)
     : allocator_(allocator),
       device_ordinal_(device_ordinal),
       device_memory_(device_memory.begin(), device_memory.end()),
@@ -231,7 +231,7 @@ TrackedDeviceBuffer::TrackedDeviceBuffer(
       on_delete_callback_(std::move(on_delete_callback)) {}
 
 TrackedDeviceBuffer::~TrackedDeviceBuffer() {
-  if (allocator_) {
+  if (allocator_ && on_delete_callback_ == nullptr) {
     for (const se::DeviceMemoryBase& buffer : device_memory_) {
       Status status = allocator_->Deallocate(device_ordinal_, buffer);
       if (!status.ok()) {
@@ -269,6 +269,16 @@ void TrackedDeviceBuffer::AddUsageEvent(
     }
   }
   usage_events_.push_back({usage_stream, event, reference_held});
+}
+
+std::function<void()>  TrackedDeviceBuffer::get_on_delete_callback() {
+  auto on_delete_callback = std::move(on_delete_callback_);
+  on_delete_callback_ = nullptr;
+  return on_delete_callback;
+}
+
+void TrackedDeviceBuffer::set_on_delete_callback(std::function<void()>  on_delete_callback) {
+  on_delete_callback_ = on_delete_callback;
 }
 
 TrackedDeviceBuffer::StreamAndEventContainer

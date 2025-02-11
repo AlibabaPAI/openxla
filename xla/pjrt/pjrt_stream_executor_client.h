@@ -190,6 +190,9 @@ class PjRtStreamExecutorDevice : public PjRtDevice {
 
   StatusOr<std::intptr_t> GetLocalComputeStream() const override;
 
+  Status SetLocalComputeStream(std::intptr_t stream) const override;
+
+  Status WaitLocalComputeStream() const override;
   std::unique_ptr<ScopedAsyncTrackingEvent> CreateAsyncTrackingEvent(
       absl::string_view description) const override {
     return nullptr;
@@ -938,6 +941,9 @@ class PjRtStreamExecutorLoadedExecutable : public PjRtLoadedExecutable {
   // classes may use custom logic.
   virtual absl::Span<int const> ParametersThatMustBeDonated(
       int executable_idx) const;
+
+  StatusOr<std::vector<int64_t>> GetAliasedParams(
+      int executable_idx, int64_t num_inputs, int64_t num_outputs) const override;
 
   virtual StatusOr<std::vector<ExecutionInput>>
   MakeExecutionInputsAndWaitForEvents(

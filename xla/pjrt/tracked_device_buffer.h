@@ -260,6 +260,10 @@ class TrackedDeviceBuffer {
                      std::shared_ptr<BufferSequencingEvent> event,
                      bool reference_held);
 
+  std::function<void()> get_on_delete_callback();
+
+  void set_on_delete_callback(std::function<void()> on_delete_callback);
+
   using StreamAndEventContainer = absl::InlinedVector<StreamAndEvent, 3>;
   // Returns the set of streams that the buffer was used on, and for each stream
   // an event later than the last use of the buffer. After
@@ -272,7 +276,7 @@ class TrackedDeviceBuffer {
                       absl::Span<se::DeviceMemoryBase const> device_memory,
                       absl::Span<const std::shared_ptr<BufferSequencingEvent>>
                           definition_events,
-                      absl::AnyInvocable<void() &&> on_delete_callback);
+                      std::function<void()> on_delete_callback);
   ~TrackedDeviceBuffer();
 
  private:
@@ -301,7 +305,7 @@ class TrackedDeviceBuffer {
   StreamAndEventContainer usage_events_;
 
   // A callback to call when the TrackedDeviceBuffer is about to be destroyed.
-  absl::AnyInvocable<void() &&> on_delete_callback_;
+  std::function<void()> on_delete_callback_;
 };
 
 // Populates 'events' with the set of buffer events for buffer. If

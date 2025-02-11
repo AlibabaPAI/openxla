@@ -842,7 +842,7 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
 #endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
 
   // Force synchronous execution if the allocator requires it.
-  const bool block_host_until_done = true;
+  const bool block_host_until_done = false;
 
   // Lock the GPU with a shared lock so that we don't interfere with autotuning
   // that may be running during JIT compilation while allowing multiple XLA
@@ -989,10 +989,8 @@ absl::StatusOr<ExecutionOutput> GpuExecutable::ExecuteAsyncOnStreamImpl(
     }
     buffers_in_result.insert(result_buffer);
   }
-
   TF_RETURN_IF_ERROR(ExecuteThunksOrXlaRuntime(run_options, buffer_allocations,
                                                block_host_until_done));
-
   TF_RETURN_IF_ERROR(
       buffer_allocations.TearDown(buffers_in_result, GetAllocations()));
 
